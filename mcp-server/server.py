@@ -1,6 +1,6 @@
+import csv
 from pathlib import Path
 
-import pandas as pd
 from mcp.server.fastmcp import FastMCP
 
 DATA_FILE = Path(__file__).parent / "case_data.csv"
@@ -9,49 +9,74 @@ TAX_RULES_FILE = Path(__file__).parent / "tax_rules.csv"
 mcp = FastMCP("case-search-light")
 
 
-def _load_case_data() -> pd.DataFrame:
+def _normalize_value(value: str) -> int | float | str | None:
+    if value is None:
+        return None
+
+    value = value.strip()
+    if value == "":
+        return None
+
     try:
-        return pd.read_csv(DATA_FILE)
+        if "." in value:
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+def _read_csv_rows(file_path: Path) -> list[dict]:
+    try:
+        with file_path.open("r", encoding="utf-8-sig", newline="") as file_obj:
+            reader = csv.DictReader(file_obj)
+            rows: list[dict] = []
+            for row in reader:
+                normalized = {
+                    key: _normalize_value(value) for key, value in row.items()
+                }
+                rows.append(normalized)
+            return rows
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Missing file: {file_path}") from exc
+
+
+def _load_case_data() -> list[dict]:
+    try:
+        return _read_csv_rows(DATA_FILE)
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"Missing data file: {DATA_FILE}") from exc
 
 
-def _load_tax_rules() -> pd.DataFrame:
+def _load_tax_rules() -> list[dict]:
     try:
-        return pd.read_csv(TAX_RULES_FILE)
+        return _read_csv_rows(TAX_RULES_FILE)
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"Missing tax rules file: {TAX_RULES_FILE}") from exc
 
 
 def _search_case_by_ban(ban: str) -> dict | None:
-    df = _load_case_data()
-    result = df[df["ban"].str.upper() == ban.upper()]
+    rows = _load_case_data()
+    target_ban = ban.upper()
 
-    if result.empty:
-        return None
+    for row in rows:
+        row_ban = row.get("ban")
+        if isinstance(row_ban, str) and row_ban.upper() == target_ban:
+            return row
 
-    case_info = result.iloc[0].to_dict()
-    for key, value in case_info.items():
-        if pd.isna(value):
-            case_info[key] = None
-
-    return case_info
+    return None
 
 
 def _get_rules_by_tax_type(tax_type: str) -> list[dict] | None:
-    df = _load_tax_rules()
-    filtered_rules = df[df["tax_type"] == tax_type]
+    rows = _load_tax_rules()
+    filtered_rules = []
+    for row in rows:
+        if row.get("tax_type") == tax_type:
+            filtered_rules.append(row)
 
-    if filtered_rules.empty:
+    if not filtered_rules:
         return None
 
-    rules_list = filtered_rules.to_dict("records")
-    for rule in rules_list:
-        for key, value in rule.items():
-            if pd.isna(value):
-                rule[key] = None
-
-    return rules_list
+    return filtered_rules
 
 
 @mcp.tool()
